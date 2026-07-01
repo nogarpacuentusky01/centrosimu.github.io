@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Centro de Simulación — Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@500;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{ --bg:#020617; --card:#111827; --ink:#f8fafc; --muted:#94a3b8; --ok:#14b8a6; --busy:#ef4444; --prep:#f59e0b; --maint:#64748b; --accent:#60a5fa; --radius:18px; --shadow:0 8px 30px rgba(2,6,23,.45); color-scheme: dark;}
+  html,body{height:100%;margin:0;background:linear-gradient(180deg,#0f172a,var(--bg));font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial;color:var(--ink);}
+  .wrap{max-width:1920px;margin:0 auto;padding:24px 40px;}
+  header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;}
+  .brand{display:flex;gap:16px;align-items:center}
+  .brand h1{font-size:28px;margin:0;font-weight:800;letter-spacing:.2px}
+  .clock{font-weight:800;font-size:28px;color:var(--accent)}
+  .banner{background:linear-gradient(135deg,#1e293b,#0f172a);border:1px solid #334155;padding:12px 16px;border-radius:14px;display:flex;align-items:center;gap:12px;color:#e2e8f0;margin-bottom:16px}
+  .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:18px}
+  .card{position:relative;background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:18px 18px 16px;min-height:180px;display:flex;flex-direction:column;justify-content:space-between;overflow:hidden;}
+  .name{font-size:22px;font-weight:800;letter-spacing:.3px;margin:0 0 4px 0}
+  .meta{display:flex;align-items:center;gap:10px;color:var(--muted);font-weight:600}
+  .pill{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;font-weight:800;font-size:12px;color:white}
+  .pill svg{width:16px;height:16px}
+  .msg{font-size:16px;font-weight:700;margin-top:8px}
+  .time{font-size:13px;color:var(--muted);margin-top:2px}
+  .foot{display:flex;justify-content:space-between;align-items:center;margin-top:6px}
+  .next{font-size:13px;color:#e2e8f0;background:#1e293b;border:1px solid #334155;padding:6px 10px;border-radius:10px;font-weight:600}
+  .stamp{font-size:12px;color:var(--muted)}
+  .ring{position:absolute;right:-40px;top:-40px;width:160px;height:160px;border-radius:50%;filter:blur(0.2px);opacity:.12;}
+  .libre{background:var(--ok)} .ocupada{background:var(--busy)} .preparacion,.limpieza{background:var(--prep)} .mantenimiento{background:var(--maint)} .debrief{background:var(--busy)} .emergencia{background:linear-gradient(135deg,#ef4444,#dc2626)}
+  .pulse{animation:pulse 2.2s ease-in-out infinite}
+  @keyframes pulse{0%{transform:scale(1);opacity:.18}50%{transform:scale(1.08);opacity:.10}100%{transform:scale(1);opacity:.18}}
+  @media (max-width:1400px){ .grid{grid-template-columns:repeat(3,1fr);} }
+  @media (max-width:1000px){ .grid{grid-template-columns:repeat(2,1fr);} }
+  @media (max-width:700px){ .grid{grid-template-columns:1fr;} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <svg width="40" height="40" viewBox="0 0 24 24" fill="none"><path d="M5 12a7 7 0 1 1 14 0v6H5v-6Z" stroke="#2563eb" stroke-width="1.6"/><circle cx="12" cy="8" r="2.2" fill="#2563eb"/></svg>
+      <h1>Centro de Simulación — Facultad de Medicina UNMDP</h1>
+    </div>
+    <div class="clock" id="clock"></div>
+  </header>
+
+
+  <section class="grid" id="grid"></section>
+</div>
+
+<script>
+// URL de tu Web App:
+const APPS_SCRIPT = "https://controlsentrosim.md-ahumadar.workers.dev/";
+
+function fmtRel(ms){ if(!ms)return ''; const s=Math.round(ms/1000), m=Math.floor(s/60), h=Math.floor(m/60); if(h>0)return `${h}h ${m%60}m`; if(m>0)return `${m}m`; return `${s}s`; }
+function iconSVG(){ return '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="6" fill="currentColor"/></svg>'; }
+
+// Etiqueta del estado con ajuste “En Simulación” salvo debrief
+function stateLabel(r){
+  if (r.state === 'ocupada') return (r.type === 'debrief' ? 'Debrief en curso' : 'En Simulación');
+  if (r.state === 'debrief') return 'Debrief en curso';
+  if (r.state === 'preparacion') return 'Preparación';
+  if (r.state === 'limpieza') return 'Limpieza';
+  if (r.state === 'mantenimiento') return 'Mantenimiento';
+  if (r.state === 'emergencia') return 'Emergencia';
+  return 'Libre';
+}
+
+function roomDisplayName(name){
+  const normalized=(name||'').toString().trim().toLowerCase();
+  if(['sala de debriefing 1','sala 1','1','debriefing 1','debriefing a-b'].includes(normalized)) return 'Sala de Debriefing A-B';
+  if(['sala de debriefing 2','sala 2','2','debriefing 2','debriefing c-d'].includes(normalized)) return 'Sala de Debriefing C-D';
+  return name;
+}
+
+function render(data){
+  const now=data.now; const grid=document.getElementById('grid'); grid.innerHTML=''; let anyBusy=false;
+  const order=['Sala de Parto','Neonatología','Terapia Intensiva','Quirófano','Consultorio Adulto','Consultorio Pediatría','Sala de Debriefing A-B','Sala de Debriefing C-D'];
+  const rooms=data.rooms.slice().sort((a,b)=> {
+    const aName=roomDisplayName(a.name);
+    const bName=roomDisplayName(b.name);
+    return order.indexOf(aName)-order.indexOf(bName);
+  });
+  rooms.forEach(r=>{
+    const pillClass=r.state||'libre';
+    if(['ocupada','debrief','emergencia'].includes(r.state)) anyBusy=true;
+    const ringColor = r.state==='libre' ? '#1f8a70' : (['ocupada','debrief'].includes(r.state) ? '#d7263d' : (['preparacion','limpieza'].includes(r.state) ? '#f59e0b' : (r.state==='mantenimiento' ? '#9aa6b2' : '#ef4444')));
+    let timeLine=''; if(r.endAt && r.endAt>now){ timeLine=`Termina en ${fmtRel(r.endAt-now)}`; }
+    let next=''; if(r.nextTitle && r.nextStartAt && r.nextStartAt>now){ next=`Próximo: ${r.nextTitle} · inicia en ${fmtRel(r.nextStartAt-now)}`; }
+    const card=document.createElement('div'); card.className='card'; card.innerHTML=`
+      <div class="ring ${r.state!=='libre' ? 'pulse' : ''}" style="background:${ringColor}"></div>
+
+      <div>
+        <h2 class="name">${roomDisplayName(r.name)}</h2>
+        <div class="meta"><span class="pill ${pillClass}">${iconSVG()} ${stateLabel(r)}</span></div>
+        ${timeLine? `<div class="time">${timeLine}</div>` : '' }
+      </div>
+      <div class="foot">
+        ${next? `<div class="next">${next}</div>` : '' }
+      </div>`;
+    grid.appendChild(card);
+  });
+  document.getElementById('banner').style.display= anyBusy ? 'flex':'none';
+  document.getElementById('clock').textContent = new Date(now).toLocaleTimeString();
+}
+
+function loadRooms(){ const s=document.createElement('script'); s.src=`${APPS_SCRIPT}?action=getRooms&format=jsonp&callback=render&_=${Date.now()}`; document.body.appendChild(s); }
+loadRooms(); setInterval(loadRooms, 9000);
+setInterval(()=>{document.getElementById('clock').textContent=new Date().toLocaleTimeString()},1000);
+</script>
+</body>
+</html>
